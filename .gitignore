@@ -24,6 +24,12 @@ runs/
 wandb/
 *.log
 
+# Local notes and generated documentation.
+# Keep only the root README.md tracked on GitHub.
+*.md
+!/README.md
+docs/
+
 # Editors
 .vscode/
 .idea/

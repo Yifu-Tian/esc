@@ -1,27 +1,16 @@
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import time
-from typing import Callable
 
 import numpy as np
 
 from mm_flow.three_d.collision import Obstacle3D
 from mm_flow.three_d.kinematics import SimpleMobileManipulator3D
+from mm_flow.three_d.problems import ReachSequenceProblem
+from mm_flow.three_d.results import ReachSequencePlanResult
 from mm_flow.three_d.rrt_connect import RRTConnectConfig, plan_rrt_connect_to_goal
-
-
-@dataclass(frozen=True)
-class ReachSequencePlanResult:
-    trajectory: np.ndarray
-    segment_ends: list[int]
-    terminal_errors: list[float]
-    clearances: list[float]
-    iterations: list[int]
-    planning_times: list[float]
-    messages: list[str]
-    success: bool
-    planner_name: str
 
 
 @dataclass(frozen=True)
@@ -29,10 +18,28 @@ class PlannerSpec:
     name: str
     display_name: str
     config_type: type
-    plan_sequence: Callable[
-        [SimpleMobileManipulator3D, np.ndarray, np.ndarray, list[Obstacle3D], object],
-        ReachSequencePlanResult,
-    ]
+    planner: "Planner"
+
+
+class Planner(ABC):
+    name: str
+    display_name: str
+    config_type: type
+
+    @abstractmethod
+    def plan(self, problem: ReachSequenceProblem, config: object) -> ReachSequencePlanResult:
+        raise NotImplementedError
+
+
+class RRTConnectPlanner(Planner):
+    name = "rrt_connect"
+    display_name = "RRT-Connect whole-body baseline"
+    config_type = RRTConnectConfig
+
+    def plan(self, problem: ReachSequenceProblem, config: object) -> ReachSequencePlanResult:
+        if not isinstance(config, RRTConnectConfig):
+            raise TypeError(f"{self.name} expects config type RRTConnectConfig")
+        return plan_rrt_connect_reach_sequence(problem, config)
 
 
 def available_planners() -> tuple[str, ...]:
@@ -55,19 +62,38 @@ def plan_reach_sequence(
     obstacles: list[Obstacle3D],
     config: object,
 ) -> ReachSequencePlanResult:
+    problem = ReachSequenceProblem(
+        name="adhoc_reach_sequence",
+        robot=robot,
+        start=start,
+        goals_xyz=goals_xyz,
+        obstacles=obstacles,
+        seed=-1,
+        bounds_xy=getattr(config, "bounds_xy", ((-2.8, 2.8), (-1.9, 1.9))),
+    )
+    return plan_problem(planner_name, robot, problem, config)
+
+
+def plan_problem(
+    planner_name: str,
+    robot: SimpleMobileManipulator3D,
+    problem: ReachSequenceProblem,
+    config: object,
+) -> ReachSequencePlanResult:
     planner = get_planner(planner_name)
     if not isinstance(config, planner.config_type):
         raise TypeError(f"Planner '{planner_name}' expects config type {planner.config_type.__name__}")
-    return planner.plan_sequence(robot, start, goals_xyz, obstacles, config)
+    return planner.planner.plan(problem, config)
 
 
 def plan_rrt_connect_reach_sequence(
-    robot: SimpleMobileManipulator3D,
-    start: np.ndarray,
-    goals_xyz: np.ndarray,
-    obstacles: list[Obstacle3D],
+    problem: ReachSequenceProblem,
     config: RRTConnectConfig,
 ) -> ReachSequencePlanResult:
+    robot = problem.robot
+    start = problem.start
+    goals_xyz = problem.goals_xyz
+    obstacles = problem.obstacles
     current = start.copy()
     pieces = []
     segment_ends: list[int] = []
@@ -120,14 +146,18 @@ def plan_rrt_connect_reach_sequence(
         messages=messages,
         success=bool(success),
         planner_name="rrt_connect",
+        failure_reason="" if success else "; ".join(dict.fromkeys(message for message in messages if message != "connected")),
+        metadata={"collision_checker": "proxy", "task_type": problem.task_type},
     )
 
 
+_RRT_CONNECT_PLANNER = RRTConnectPlanner()
+
 PLANNER_REGISTRY: dict[str, PlannerSpec] = {
     "rrt_connect": PlannerSpec(
-        name="rrt_connect",
-        display_name="RRT-Connect whole-body baseline",
+        name=_RRT_CONNECT_PLANNER.name,
+        display_name=_RRT_CONNECT_PLANNER.display_name,
         config_type=RRTConnectConfig,
-        plan_sequence=plan_rrt_connect_reach_sequence,
+        planner=_RRT_CONNECT_PLANNER,
     ),
 }
