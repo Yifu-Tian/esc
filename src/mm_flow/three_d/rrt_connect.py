@@ -29,6 +29,7 @@ class RRTPlanResult:
     min_clearance: float
     iterations: int
     message: str
+    collision_checks: int = 0
 
 
 @dataclass
@@ -45,13 +46,14 @@ def plan_rrt_connect_to_goal(
     config: RRTConnectConfig,
 ) -> RRTPlanResult:
     rng = np.random.default_rng(config.rng_seed)
+    counter = {"collision_checks": 0}
     start = _normalize_state(robot, start.copy())
-    if not _is_state_valid(robot, start, obstacles, config.clearance_margin):
-        return _failure(start, robot, goal_xyz, obstacles, "start state is in collision")
+    if not _is_state_valid(robot, start, obstacles, config.clearance_margin, counter):
+        return _failure(start, robot, goal_xyz, obstacles, "start state is in collision", counter)
 
-    goal_states = _sample_goal_states(robot, goal_xyz, obstacles, config, rng)
+    goal_states = _sample_goal_states(robot, goal_xyz, obstacles, config, rng, counter)
     if not goal_states:
-        return _failure(start, robot, goal_xyz, obstacles, "no valid IK goal states")
+        return _failure(start, robot, goal_xyz, obstacles, "no valid IK goal states", counter)
 
     tree_a = [_Node(start, -1)]
     tree_b = [_Node(goal_states[0], -1)]
@@ -65,13 +67,13 @@ def plan_rrt_connect_to_goal(
         else:
             sample = _sample_state(robot, config, rng)
 
-        status, new_idx = _extend(tree_a, sample, robot, obstacles, config)
+        status, new_idx = _extend(tree_a, sample, robot, obstacles, config, counter)
         if status == "trapped":
             tree_a, tree_b = tree_b, tree_a
             swapped = not swapped
             continue
 
-        status_b, connect_idx = _connect(tree_b, tree_a[new_idx].state, robot, obstacles, config)
+        status_b, connect_idx = _connect(tree_b, tree_a[new_idx].state, robot, obstacles, config, counter)
         if status_b == "reached":
             path_a = _path_to_root(tree_a, new_idx)
             path_b = _path_to_root(tree_b, connect_idx)
@@ -80,23 +82,30 @@ def plan_rrt_connect_to_goal(
             else:
                 states = path_a + list(reversed(path_b))
             trajectory = _interpolate_path(np.array(states), config.edge_resolution)
-            trajectory = _shortcut_path(robot, trajectory, obstacles, config, rng)
+            trajectory = _shortcut_path(robot, trajectory, obstacles, config, rng, counter)
             terminal_error = float(np.linalg.norm(robot.end_effector(trajectory[-1]) - goal_xyz))
             min_clearance = trajectory_min_clearance(robot, trajectory, obstacles)
             success = bool(terminal_error <= config.goal_tolerance and min_clearance >= config.clearance_margin)
+            if terminal_error > config.goal_tolerance:
+                message = "connected but terminal error exceeds tolerance"
+            elif min_clearance < config.clearance_margin:
+                message = "connected but clearance below margin"
+            else:
+                message = "connected"
             return RRTPlanResult(
                 trajectory=trajectory,
                 success=success,
                 terminal_error=terminal_error,
                 min_clearance=float(min_clearance),
                 iterations=iteration + 1,
-                message="connected",
+                message=message,
+                collision_checks=counter["collision_checks"],
             )
 
         tree_a, tree_b = tree_b, tree_a
         swapped = not swapped
 
-    return _failure(start, robot, goal_xyz, obstacles, "max iterations reached")
+    return _failure(start, robot, goal_xyz, obstacles, "max iterations reached", counter, config.max_iterations)
 
 
 def _sample_goal_states(
@@ -105,6 +114,7 @@ def _sample_goal_states(
     obstacles: list[Obstacle3D],
     config: RRTConnectConfig,
     rng: np.random.Generator,
+    counter: dict[str, int] | None = None,
 ) -> list[np.ndarray]:
     states: list[np.ndarray] = []
     x_bounds, y_bounds = config.bounds_xy
@@ -120,7 +130,7 @@ def _sample_goal_states(
             q = robot.inverse_kinematics_for_goal(base_xy, yaw, goal_xyz, elbow_up=elbow_up)
             state = _normalize_state(robot, np.array([base_xy[0], base_xy[1], yaw, *q], dtype=float))
             terminal_error = np.linalg.norm(robot.end_effector(state) - goal_xyz)
-            if terminal_error <= config.goal_tolerance and _is_state_valid(robot, state, obstacles, config.clearance_margin):
+            if terminal_error <= config.goal_tolerance and _is_state_valid(robot, state, obstacles, config.clearance_margin, counter):
                 states.append(state)
 
     # Deterministic fallback around the goal improves repeatability.
@@ -130,7 +140,7 @@ def _sample_goal_states(
         q = robot.inverse_kinematics_for_goal(base_xy, yaw, goal_xyz, elbow_up=False)
         state = _normalize_state(robot, np.array([base_xy[0], base_xy[1], yaw, *q], dtype=float))
         terminal_error = np.linalg.norm(robot.end_effector(state) - goal_xyz)
-        if terminal_error <= config.goal_tolerance and _is_state_valid(robot, state, obstacles, config.clearance_margin):
+        if terminal_error <= config.goal_tolerance and _is_state_valid(robot, state, obstacles, config.clearance_margin, counter):
             states.append(state)
     return states
 
@@ -141,10 +151,11 @@ def _extend(
     robot: SimpleMobileManipulator3D,
     obstacles: list[Obstacle3D],
     config: RRTConnectConfig,
+    counter: dict[str, int] | None = None,
 ) -> tuple[str, int]:
     nearest_idx = _nearest(tree, target)
     new_state = _normalize_state(robot, _steer(tree[nearest_idx].state, target, config.step_size))
-    if not _is_edge_valid(robot, tree[nearest_idx].state, new_state, obstacles, config):
+    if not _is_edge_valid(robot, tree[nearest_idx].state, new_state, obstacles, config, counter):
         return "trapped", nearest_idx
     tree.append(_Node(new_state, nearest_idx))
     if _state_distance(new_state, target) < config.step_size:
@@ -158,15 +169,16 @@ def _connect(
     robot: SimpleMobileManipulator3D,
     obstacles: list[Obstacle3D],
     config: RRTConnectConfig,
+    counter: dict[str, int] | None = None,
 ) -> tuple[str, int]:
     last_idx = _nearest(tree, target)
     while True:
-        status, idx = _extend(tree, target, robot, obstacles, config)
+        status, idx = _extend(tree, target, robot, obstacles, config, counter)
         if status == "trapped":
             return "trapped", last_idx
         last_idx = idx
         if _state_distance(tree[idx].state, target) <= config.step_size:
-            if _is_edge_valid(robot, tree[idx].state, target, obstacles, config):
+            if _is_edge_valid(robot, tree[idx].state, target, obstacles, config, counter):
                 tree.append(_Node(_normalize_state(robot, target.copy()), idx))
                 return "reached", len(tree) - 1
             return "advanced", idx
@@ -230,7 +242,10 @@ def _is_state_valid(
     state: np.ndarray,
     obstacles: list[Obstacle3D],
     clearance_margin: float,
+    counter: dict[str, int] | None = None,
 ) -> bool:
+    if counter is not None:
+        counter["collision_checks"] = counter.get("collision_checks", 0) + 1
     return is_state_collision_free(robot, state, obstacles, clearance_margin)
 
 
@@ -240,12 +255,14 @@ def _is_edge_valid(
     b: np.ndarray,
     obstacles: list[Obstacle3D],
     config: RRTConnectConfig,
+    counter: dict[str, int] | None = None,
 ) -> bool:
     delta = _state_delta(a, b)
-    steps = max(2, int(np.ceil(float(np.linalg.norm(delta)) / config.edge_resolution)))
-    for alpha in np.linspace(0.0, 1.0, steps):
+    steps = max(1, int(np.ceil(float(np.linalg.norm(delta)) / config.edge_resolution)))
+    for k in range(steps + 1):
+        alpha = k / steps
         state = _normalize_state(robot, a + alpha * delta)
-        if not _is_state_valid(robot, state, obstacles, config.clearance_margin):
+        if not _is_state_valid(robot, state, obstacles, config.clearance_margin, counter):
             return False
     return True
 
@@ -278,6 +295,7 @@ def _shortcut_path(
     obstacles: list[Obstacle3D],
     config: RRTConnectConfig,
     rng: np.random.Generator,
+    counter: dict[str, int] | None = None,
 ) -> np.ndarray:
     path = trajectory.copy()
     for _ in range(config.shortcut_attempts):
@@ -286,7 +304,7 @@ def _shortcut_path(
         i, j = sorted(rng.choice(len(path), size=2, replace=False))
         if j <= i + 2:
             continue
-        if _is_edge_valid(robot, path[i], path[j], obstacles, config):
+        if _is_edge_valid(robot, path[i], path[j], obstacles, config, counter):
             bridge = _interpolate_path(np.array([path[i], path[j]]), config.edge_resolution)
             path = np.vstack([path[: i + 1], bridge[1:-1], path[j:]])
     return path
@@ -298,6 +316,8 @@ def _failure(
     goal_xyz: np.ndarray,
     obstacles: list[Obstacle3D],
     message: str,
+    counter: dict[str, int] | None = None,
+    iterations: int = 0,
 ) -> RRTPlanResult:
     terminal_error = float(np.linalg.norm(robot.end_effector(start) - goal_xyz))
     return RRTPlanResult(
@@ -305,6 +325,7 @@ def _failure(
         success=False,
         terminal_error=terminal_error,
         min_clearance=float(trajectory_min_clearance(robot, start[None, :], obstacles)),
-        iterations=0,
+        iterations=iterations,
         message=message,
+        collision_checks=counter.get("collision_checks", 0) if counter is not None else 0,
     )

@@ -91,11 +91,13 @@ def save_reach_sequence_run(
         },
     )
 
+    visualization_step = 0.08
     visual_trajectory, visual_segment_ends = densify_trajectory_for_visualization(
         result.trajectory,
         result.segment_ends,
-        max_state_step=0.08,
+        max_state_step=visualization_step,
     )
+    visual_index_map = _visual_index_map(result.trajectory, max_state_step=visualization_step)
     export_reach_sequence_html(
         robot,
         visual_trajectory,
@@ -117,6 +119,22 @@ def save_reach_sequence_run(
             "planningTimes": result.planning_times,
             "messages": result.messages,
             "metrics": asdict(metrics),
+            "pathLength": metrics.path_length,
+            "basePathLength": metrics.base_path_length,
+            "jointMotionLength": metrics.joint_motion_length,
+            "eePathLength": metrics.end_effector_path_length,
+            "smoothness": metrics.smoothness,
+            "collisionCheckCount": metrics.collision_check_count,
+            "perGoalPathLength": metrics.per_goal_path_length,
+            "perGoalBasePathLength": metrics.per_goal_base_path_length,
+            "perGoalJointMotionLength": metrics.per_goal_joint_motion_length,
+            "perGoalEePathLength": metrics.per_goal_end_effector_path_length,
+            "perGoalMinClearance": metrics.per_goal_min_clearance,
+            "resultMetadata": result.metadata,
+            "recedingCycles": _map_receding_cycles_to_visual_frames(
+                result.metadata.get("receding_cycles", []),
+                visual_index_map,
+            ),
         },
     )
     return {
@@ -140,3 +158,43 @@ def _config_to_dict(config: object | None) -> dict[str, Any]:
     if hasattr(config, "__dict__"):
         return dict(config.__dict__)
     return {"repr": repr(config)}
+
+
+def _visual_index_map(trajectory: np.ndarray, max_state_step: float) -> dict[int, int]:
+    index_map = {0: 0}
+    dense_index = 0
+    for i in range(len(trajectory) - 1):
+        delta = trajectory[i + 1] - trajectory[i]
+        steps = max(1, int(np.ceil(float(np.max(np.abs(delta))) / max_state_step)))
+        dense_index += steps
+        index_map[i + 1] = dense_index
+    return index_map
+
+
+def _map_receding_cycles_to_visual_frames(
+    cycles: object,
+    visual_index_map: dict[int, int],
+) -> list[dict[str, Any]]:
+    if not isinstance(cycles, list):
+        return []
+    mapped = []
+    last_visual_index = max(visual_index_map.values()) if visual_index_map else 0
+    for cycle in cycles:
+        if not isinstance(cycle, dict):
+            continue
+        record = dict(cycle)
+        frame_start = _safe_int(record.get("frame_start"), 0)
+        frame_end = _safe_int(record.get("frame_end"), frame_start)
+        record["planning_frame_start"] = frame_start
+        record["planning_frame_end"] = frame_end
+        record["frame_start"] = visual_index_map.get(frame_start, last_visual_index)
+        record["frame_end"] = visual_index_map.get(frame_end, last_visual_index)
+        mapped.append(record)
+    return mapped
+
+
+def _safe_int(value: object, fallback: int) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback

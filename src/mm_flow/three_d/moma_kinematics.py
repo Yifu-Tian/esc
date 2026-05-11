@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import dataclass
 from pathlib import Path
 import shutil
@@ -200,6 +201,8 @@ class MomaPiperMobileManipulator3D:
                     copied[source] = f"moma_meshes/{target.name}"
                 item["url"] = copied[source]
                 item["format"] = source.suffix.lower().lstrip(".")
+                item["dataBase64"] = base64.b64encode(source.read_bytes()).decode("ascii")
+                item["mimeType"] = "model/vnd.collada+xml" if item["format"] == "dae" else "application/octet-stream"
             elif spec.geometry_type == "box" and spec.box_size is not None:
                 item["size"] = list(spec.box_size)
             exported.append(item)

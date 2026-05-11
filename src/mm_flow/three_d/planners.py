@@ -9,8 +9,20 @@ import numpy as np
 from mm_flow.three_d.collision import Obstacle3D
 from mm_flow.three_d.kinematics import SimpleMobileManipulator3D
 from mm_flow.three_d.problems import ReachSequenceProblem
+from mm_flow.three_d.receding import RecedingHorizonRunner
 from mm_flow.three_d.results import ReachSequencePlanResult
 from mm_flow.three_d.rrt_connect import RRTConnectConfig, plan_rrt_connect_to_goal
+
+
+@dataclass(frozen=True)
+class RecedingRRTConnectConfig:
+    rrt: RRTConnectConfig
+    horizon_steps: int = 24
+    execute_steps: int = 6
+    max_cycles_per_goal: int = 8
+    follower_alpha: float = 1.0
+    disturbance_std: float = 0.0
+    follower_seed: int = 0
 
 
 @dataclass(frozen=True)
@@ -40,6 +52,29 @@ class RRTConnectPlanner(Planner):
         if not isinstance(config, RRTConnectConfig):
             raise TypeError(f"{self.name} expects config type RRTConnectConfig")
         return plan_rrt_connect_reach_sequence(problem, config)
+
+
+class RecedingRRTConnectPlanner(Planner):
+    name = "rrt_connect_receding"
+    display_name = "Receding-horizon RRT-Connect baseline"
+    config_type = RecedingRRTConnectConfig
+
+    def plan(self, problem: ReachSequenceProblem, config: object) -> ReachSequencePlanResult:
+        if not isinstance(config, RecedingRRTConnectConfig):
+            raise TypeError(f"{self.name} expects config type RecedingRRTConnectConfig")
+        from mm_flow.three_d.execution import FirstOrderTrajectoryFollower
+
+        runner = RecedingHorizonRunner(
+            horizon_steps=config.horizon_steps,
+            execute_steps=config.execute_steps,
+            max_cycles_per_goal=config.max_cycles_per_goal,
+            follower=FirstOrderTrajectoryFollower(
+                alpha=config.follower_alpha,
+                disturbance_std=config.disturbance_std,
+                seed=config.follower_seed,
+            ),
+        )
+        return runner.run(problem, "rrt_connect", config.rrt)
 
 
 def available_planners() -> tuple[str, ...]:
@@ -102,6 +137,7 @@ def plan_rrt_connect_reach_sequence(
     iterations: list[int] = []
     planning_times: list[float] = []
     messages: list[str] = []
+    per_goal_collision_checks: list[int] = []
     success = True
 
     for i, goal_xyz in enumerate(goals_xyz):
@@ -127,12 +163,26 @@ def plan_rrt_connect_reach_sequence(
         clearances.append(result.min_clearance)
         iterations.append(result.iterations)
         messages.append(result.message)
+        per_goal_collision_checks.append(result.collision_checks)
         segment_ends.append(sum(len(piece) for piece in pieces) - 1)
         success = success and result.success
+        if not result.success:
+            break
 
         if i < len(goals_xyz) - 1:
             dwell = np.repeat(current[None, :], 4, axis=0)
             pieces.append(dwell)
+
+    while len(segment_ends) < len(goals_xyz):
+        goal_xyz = goals_xyz[len(segment_ends)]
+        terminal_errors.append(float(np.linalg.norm(robot.end_effector(current) - goal_xyz)))
+        clearances.append(float(result.min_clearance if clearances else 0.0))
+        iterations.append(0)
+        planning_times.append(0.0)
+        messages.append("skipped after failed segment")
+        per_goal_collision_checks.append(0)
+        segment_ends.append(sum(len(piece) for piece in pieces) - 1)
+        success = False
 
     trajectory = np.vstack(pieces)
     trajectory[:, 2] = np.unwrap(trajectory[:, 2])
@@ -147,11 +197,17 @@ def plan_rrt_connect_reach_sequence(
         success=bool(success),
         planner_name="rrt_connect",
         failure_reason="" if success else "; ".join(dict.fromkeys(message for message in messages if message != "connected")),
-        metadata={"collision_checker": "proxy", "task_type": problem.task_type},
+        metadata={
+            "collision_checker": "proxy",
+            "task_type": problem.task_type,
+            "collision_check_count": int(sum(per_goal_collision_checks)),
+            "per_goal_collision_checks": per_goal_collision_checks,
+        },
     )
 
 
 _RRT_CONNECT_PLANNER = RRTConnectPlanner()
+_RECEDING_RRT_CONNECT_PLANNER = RecedingRRTConnectPlanner()
 
 PLANNER_REGISTRY: dict[str, PlannerSpec] = {
     "rrt_connect": PlannerSpec(
@@ -159,5 +215,11 @@ PLANNER_REGISTRY: dict[str, PlannerSpec] = {
         display_name=_RRT_CONNECT_PLANNER.display_name,
         config_type=RRTConnectConfig,
         planner=_RRT_CONNECT_PLANNER,
+    ),
+    "rrt_connect_receding": PlannerSpec(
+        name=_RECEDING_RRT_CONNECT_PLANNER.name,
+        display_name=_RECEDING_RRT_CONNECT_PLANNER.display_name,
+        config_type=RecedingRRTConnectConfig,
+        planner=_RECEDING_RRT_CONNECT_PLANNER,
     ),
 }

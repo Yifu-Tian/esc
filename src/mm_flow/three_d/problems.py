@@ -35,28 +35,30 @@ def build_moma_reach_sequence_problem(
     seed: int = 3,
     obstacle_count: int = 24,
     bounds_xy: tuple[tuple[float, float], tuple[float, float]] = ((-2.4, 2.4), (-1.7, 1.7)),
+    variant: str = "standard",
 ) -> ReachSequenceProblem:
     robot = robot or MomaPiperMobileManipulator3D()
-    start_q = np.array([0.0, 0.8, -1.1, 0.0, 0.25, 0.0], dtype=float)
-    start = np.array([-1.45, -0.75, 0.15, *robot.clip_joints(start_q)], dtype=float)
-    goals_xyz = np.array(
-        [
-            [-0.42, 0.70, 0.74],
-            [0.82, 0.58, 0.72],
-            [1.28, -0.42, 0.82],
-        ],
-        dtype=float,
-    )
-    obstacles = _sample_spread_obstacles(np.random.default_rng(seed), obstacle_count, robot, start, goals_xyz)
+    start, goals_xyz = _start_and_goals_for_variant(robot, variant)
+    rng = np.random.default_rng(seed)
+    if variant == "standard":
+        obstacles = _sample_spread_obstacles(rng, obstacle_count, robot, start, goals_xyz)
+    elif variant == "narrow_passage":
+        obstacles = _sample_narrow_passage_obstacles(rng, obstacle_count, robot, start, goals_xyz)
+    elif variant == "arm_obstacle":
+        obstacles = _sample_arm_obstacle_scene(rng, obstacle_count, robot, start, goals_xyz)
+    elif variant == "base_required":
+        obstacles = _sample_base_required_scene(rng, obstacle_count, robot, start, goals_xyz)
+    else:
+        raise ValueError(f"Unknown reach-sequence variant: {variant!r}")
     return ReachSequenceProblem(
-        name="moma_reach_sequence",
+        name="moma_reach_sequence" if variant == "standard" else f"moma_reach_sequence_{variant}",
         robot=robot,
         start=start,
         goals_xyz=goals_xyz,
         obstacles=obstacles,
         seed=seed,
         bounds_xy=bounds_xy,
-        metadata={"robot": "moma_piper_9dof", "obstacle_count": obstacle_count},
+        metadata={"robot": "moma_piper_9dof", "obstacle_count": obstacle_count, "variant": variant},
     )
 
 
@@ -65,11 +67,58 @@ def build_dynamic_obstacle_problem(*args, **kwargs) -> ReachSequenceProblem:
 
 
 def build_narrow_passage_problem(*args, **kwargs) -> ReachSequenceProblem:
-    raise NotImplementedError("NarrowPassageProblem is planned but not implemented yet.")
+    kwargs["variant"] = "narrow_passage"
+    return build_moma_reach_sequence_problem(*args, **kwargs)
 
 
 def build_replanning_problem(*args, **kwargs) -> ReachSequenceProblem:
     raise NotImplementedError("ReplanningProblem is planned but not implemented yet.")
+
+
+def build_arm_obstacle_problem(*args, **kwargs) -> ReachSequenceProblem:
+    kwargs["variant"] = "arm_obstacle"
+    return build_moma_reach_sequence_problem(*args, **kwargs)
+
+
+def build_base_required_problem(*args, **kwargs) -> ReachSequenceProblem:
+    kwargs["variant"] = "base_required"
+    return build_moma_reach_sequence_problem(*args, **kwargs)
+
+
+def _start_and_goals_for_variant(
+    robot: MomaPiperMobileManipulator3D,
+    variant: str,
+) -> tuple[np.ndarray, np.ndarray]:
+    start_q = np.array([0.0, 0.8, -1.1, 0.0, 0.25, 0.0], dtype=float)
+    start = np.array([-1.45, -0.75, 0.15, *robot.clip_joints(start_q)], dtype=float)
+    if variant == "base_required":
+        goals_xyz = np.array(
+            [
+                [0.35, 0.78, 0.76],
+                [1.38, 0.52, 0.72],
+                [1.72, -0.54, 0.86],
+            ],
+            dtype=float,
+        )
+    elif variant == "arm_obstacle":
+        goals_xyz = np.array(
+            [
+                [-0.28, 0.72, 0.92],
+                [0.78, 0.60, 0.96],
+                [1.24, -0.38, 0.88],
+            ],
+            dtype=float,
+        )
+    else:
+        goals_xyz = np.array(
+            [
+                [-0.42, 0.70, 0.74],
+                [0.82, 0.58, 0.72],
+                [1.28, -0.42, 0.82],
+            ],
+            dtype=float,
+        )
+    return start, goals_xyz
 
 
 def _sample_spread_obstacles(
@@ -147,6 +196,78 @@ def _sample_corridor_obstacles(
             if _too_close_to_existing(obstacle, obstacles, min_distance=0.10):
                 continue
             obstacles.append(obstacle)
+    return obstacles
+
+
+def _sample_narrow_passage_obstacles(
+    rng: np.random.Generator,
+    count: int,
+    robot: MomaPiperMobileManipulator3D,
+    start: np.ndarray,
+    goals_xyz: np.ndarray,
+) -> list[Obstacle3D]:
+    obstacles: list[Obstacle3D] = []
+    for x in (-0.78, -0.38, 0.02, 0.42, 0.82):
+        obstacles.append(CuboidObstacle(center=(x, 0.38, 0.55), size=(0.18, 0.28, 1.10)))
+        obstacles.append(CuboidObstacle(center=(x, -0.42, 0.55), size=(0.18, 0.28, 1.10)))
+    return _fill_remaining_obstacles(rng, count, robot, start, goals_xyz, obstacles)
+
+
+def _sample_arm_obstacle_scene(
+    rng: np.random.Generator,
+    count: int,
+    robot: MomaPiperMobileManipulator3D,
+    start: np.ndarray,
+    goals_xyz: np.ndarray,
+) -> list[Obstacle3D]:
+    obstacles: list[Obstacle3D] = []
+    for goal in goals_xyz:
+        offset = rng.choice([-1.0, 1.0])
+        obstacles.append(SphereObstacle(center=(float(goal[0] - 0.18), float(goal[1] + 0.22 * offset), float(goal[2])), radius=0.20))
+        obstacles.append(CuboidObstacle(center=(float(goal[0] + 0.16), float(goal[1] - 0.18 * offset), float(goal[2] - 0.20)), size=(0.22, 0.18, 0.42)))
+    return _fill_remaining_obstacles(rng, count, robot, start, goals_xyz, obstacles)
+
+
+def _sample_base_required_scene(
+    rng: np.random.Generator,
+    count: int,
+    robot: MomaPiperMobileManipulator3D,
+    start: np.ndarray,
+    goals_xyz: np.ndarray,
+) -> list[Obstacle3D]:
+    obstacles: list[Obstacle3D] = [
+        CuboidObstacle(center=(-0.52, 0.10, 0.45), size=(0.34, 0.92, 0.90)),
+        CuboidObstacle(center=(0.18, 0.00, 0.48), size=(0.28, 0.82, 0.96)),
+        CylinderObstacle(center=(0.78, 0.08, 0.52), radius=0.24, height=1.04),
+    ]
+    return _fill_remaining_obstacles(rng, count, robot, start, goals_xyz, obstacles)
+
+
+def _fill_remaining_obstacles(
+    rng: np.random.Generator,
+    count: int,
+    robot: MomaPiperMobileManipulator3D,
+    start: np.ndarray,
+    goals_xyz: np.ndarray,
+    obstacles: list[Obstacle3D],
+) -> list[Obstacle3D]:
+    if len(obstacles) >= count:
+        return obstacles[:count]
+    sampled = _sample_spread_obstacles(rng, count, robot, start, goals_xyz)
+    for obstacle in sampled:
+        if len(obstacles) >= count:
+            break
+        if _too_close_to_existing(obstacle, obstacles, min_distance=0.12):
+            continue
+        obstacles.append(obstacle)
+    pad_index = 0
+    while len(obstacles) < count:
+        x = -2.15 + 0.20 * pad_index
+        y = 1.52 if pad_index % 2 == 0 else -1.52
+        obstacle = SphereObstacle(center=(float(x), float(y), 0.10), radius=0.10)
+        if not _too_close_to_existing(obstacle, obstacles, min_distance=0.04):
+            obstacles.append(obstacle)
+        pad_index += 1
     return obstacles
 
 

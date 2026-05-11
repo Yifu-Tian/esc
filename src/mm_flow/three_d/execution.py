@@ -32,4 +32,6 @@ class FirstOrderTrajectoryFollower(TrajectoryFollower):
             current = current + self.alpha * (target - current) + noise
             executed.append(current.copy())
             errors.append(float(np.linalg.norm(current - target)))
+        if not executed:
+            return ExecutionResult(executed_states=current[None, :], tracking_errors=np.zeros(1, dtype=float))
         return ExecutionResult(executed_states=np.vstack(executed), tracking_errors=np.array(errors, dtype=float))

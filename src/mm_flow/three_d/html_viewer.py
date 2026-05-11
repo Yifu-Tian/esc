@@ -328,7 +328,7 @@ def _html_template(payload_json: str) -> str:
     }});
 
     const base = new THREE.Mesh(new THREE.CylinderGeometry(data.baseRadius, data.baseRadius, data.baseHeight, 32), matBase);
-    if (!hasRobotVisuals()) scene.add(base);
+    scene.add(base);
     const heading = makeLine(0x4c72b0);
     scene.add(heading);
     heading.visible = false;
@@ -342,22 +342,12 @@ def _html_template(payload_json: str) -> str:
     const elbowJoint = makeSphere(0.055, 0x1f2933);
     const eeJoint = makeSphere(0.065, 0x55a868);
     scene.add(mountJoint, elbowJoint, eeJoint);
-    if (hasRobotVisuals()) {{
-      mountJoint.visible = false;
-      elbowJoint.visible = false;
-      eeJoint.visible = false;
-      armChain.visible = false;
-    }}
     loadRobotVisuals();
     loadCollisionProxies();
 
     const baseTrace = makeTrace(0x4c72b0);
     const eeTrace = makeTrace(0x55a868);
     scene.add(baseTrace, eeTrace);
-    if (hasRobotVisuals()) {{
-      baseTrace.visible = false;
-      eeTrace.visible = false;
-    }}
     buildFrameMarkers();
 
     const slider = document.getElementById("slider");
@@ -373,6 +363,7 @@ def _html_template(payload_json: str) -> str:
     let current = 0;
     let playing = false;
     let lastTick = 0;
+    setSimplifiedRobotVisible(robotVisuals.length === 0);
 
     function update(step) {{
       current = Math.max(0, Math.min(data.frames.length - 1, step));
@@ -414,24 +405,50 @@ def _html_template(payload_json: str) -> str:
       const targetIndex = Math.max(0, Math.min(data.goals.length - 1, target - 1));
       const iterations = Array.isArray(metadata.iterations) ? metadata.iterations[targetIndex] : undefined;
       const planningTime = Array.isArray(metadata.planningTimes) ? metadata.planningTimes[targetIndex] : undefined;
+      const cycle = currentRecedingCycle(current);
       const sceneBits = [];
       if (metadata.seed !== undefined) sceneBits.push(`seed ${{metadata.seed}}`);
       if (metadata.obstacleCount !== undefined) sceneBits.push(`obs ${{metadata.obstacleCount}}`);
       const planBits = [];
       if (iterations !== undefined) planBits.push(`${{iterations}} it`);
       if (planningTime !== undefined) planBits.push(`${{fmt(planningTime)}} s`);
+      if (metadata.collisionCheckCount !== undefined) planBits.push(`${{metadata.collisionCheckCount}} checks`);
+      const pathBits = [];
+      if (metadata.pathLength !== undefined) pathBits.push(`path ${{fmt(metadata.pathLength)}}`);
+      if (metadata.basePathLength !== undefined) pathBits.push(`base ${{fmt(metadata.basePathLength)}}`);
+      if (metadata.jointMotionLength !== undefined) pathBits.push(`joint ${{fmt(metadata.jointMotionLength)}}`);
+      const cycleRows = cycle ? `
+          <div class="key">cycle</div><div class="value">#${{cycle.cycle}} · ${{escapeHtml(cycle.goal_label || `g${{target}}`)}} · ${{escapeHtml(cycle.planner_message || "-")}}</div>
+          <div class="key">cycle time</div><div class="value">${{fmt(cycle.planning_time)}} s · ${{cycle.iterations ?? 0}} it · exec ${{cycle.executed_steps ?? 0}}</div>
+          <div class="key">track</div><div class="value">mean ${{fmt(cycle.tracking_error_mean)}} · max ${{fmt(cycle.tracking_error_max)}}</div>
+          <div class="key">jump</div><div class="value">${{fmt(cycle.plan_discontinuity)}} · after ${{fmt(cycle.state_error_after_execute)}} m</div>
+        ` : "";
       infoPanel.innerHTML = `
         <div class="title"><span>${{escapeHtml(planner)}}</span><span>${{status}}</span></div>
         <div class="grid">
           <div class="key">frame</div><div class="value">${{current}} / ${{data.frames.length - 1}} · g${{target}}</div>
           <div class="key">scene</div><div class="value">${{escapeHtml(sceneBits.join(" · ") || "-")}}</div>
           <div class="key">plan</div><div class="value">${{escapeHtml(planBits.join(" · ") || "-")}}</div>
+          <div class="key">length</div><div class="value">${{escapeHtml(pathBits.join(" · ") || "-")}}</div>
           <div class="key">base</div><div class="value">x ${{fmt(state[0])}}, y ${{fmt(state[1])}}, yaw ${{fmtRad(state[2])}}</div>
           <div class="key">arm</div><div class="value">q ${{fmtRad(state[3])}}, ${{fmtRad(state[4])}}, ${{fmtRad(state[5])}}</div>
           <div class="key">ee error</div><div class="value">${{fmt(eeError)}} m</div>
           <div class="key">clearance</div><div class="value">${{fmt(frame.clearance)}} m · min ${{fmt(minClearance)}} m</div>
+          ${{cycleRows}}
         </div>
       `;
+    }}
+
+    function currentRecedingCycle(step) {{
+      const cycles = Array.isArray(metadata.recedingCycles) ? metadata.recedingCycles : [];
+      for (const cycle of cycles) {{
+        if (step >= cycle.frame_start && step <= cycle.frame_end) return cycle;
+      }}
+      let latest = null;
+      for (const cycle of cycles) {{
+        if (step >= cycle.frame_start) latest = cycle;
+      }}
+      return latest;
     }}
 
     slider.addEventListener("input", () => update(Number(slider.value)));
@@ -470,41 +487,75 @@ def _html_template(payload_json: str) -> str:
     function loadRobotVisuals() {{
       if (!hasRobotVisuals()) return;
       for (const spec of data.robotVisuals) {{
-        if (spec.type === "box") {{
-          const mesh = new THREE.Mesh(
-            new THREE.BoxGeometry(spec.size[0], spec.size[1], spec.size[2]),
-            matRobot.clone()
-          );
-          scene.add(mesh);
-          robotVisuals.push({{ spec, object: mesh }});
-        }} else if (spec.type === "mesh" && spec.format === "stl") {{
-          stlLoader.load(spec.url, geometry => {{
-            geometry.computeVertexNormals();
+        try {{
+          if (spec.type === "box") {{
+            const geometry = new THREE.BoxGeometry(spec.size[0], spec.size[1], spec.size[2]);
             const mesh = new THREE.Mesh(geometry, matRobot.clone());
             scene.add(mesh);
             robotVisuals.push({{ spec, object: mesh }});
-            update(current);
-          }}, undefined, error => {{
-            console.error("Failed to load robot STL mesh", spec.link, spec.url, error);
-          }});
-        }} else if (spec.type === "mesh" && spec.format === "dae") {{
-          colladaLoader.load(spec.url, collada => {{
-            const object = collada.scene;
-            object.traverse(child => {{
-              if (child.isMesh) child.material = matRobot.clone();
-            }});
-            scene.add(object);
-            robotVisuals.push({{ spec, object }});
-            update(current);
-          }}, undefined, error => {{
-            console.error("Failed to load robot DAE mesh", spec.link, spec.url, error);
-          }});
+          }} else if (spec.type === "mesh" && spec.format === "stl") {{
+            if (spec.dataBase64) {{
+              const geometry = stlLoader.parse(base64ToArrayBuffer(spec.dataBase64));
+              geometry.computeVertexNormals();
+              const mesh = new THREE.Mesh(geometry, matRobot.clone());
+              scene.add(mesh);
+              robotVisuals.push({{ spec, object: mesh }});
+            }} else {{
+              stlLoader.load(spec.url, geometry => {{
+                geometry.computeVertexNormals();
+                const mesh = new THREE.Mesh(geometry, matRobot.clone());
+                scene.add(mesh);
+                robotVisuals.push({{ spec, object: mesh }});
+                setSimplifiedRobotVisible(robotVisuals.length === 0);
+                update(current);
+              }}, undefined, error => {{
+                console.error("Failed to load robot STL mesh", spec.link, spec.url, error);
+              }});
+            }}
+          }} else if (spec.type === "mesh" && spec.format === "dae") {{
+            if (spec.dataBase64) {{
+              const text = base64ToText(spec.dataBase64);
+              const object = colladaLoader.parse(text, "").scene;
+              prepareColladaObject(object);
+              scene.add(object);
+              robotVisuals.push({{ spec, object }});
+            }} else {{
+              colladaLoader.load(spec.url, collada => {{
+                const object = collada.scene;
+                prepareColladaObject(object);
+                scene.add(object);
+                robotVisuals.push({{ spec, object }});
+                setSimplifiedRobotVisible(robotVisuals.length === 0);
+                update(current);
+              }}, undefined, error => {{
+                console.error("Failed to load robot DAE mesh", spec.link, spec.url, error);
+              }});
+            }}
+          }}
+        }} catch (error) {{
+          console.error("Failed to prepare embedded robot mesh", spec.link, spec.url, error);
         }}
       }}
     }}
 
+    function setSimplifiedRobotVisible(visible) {{
+      base.visible = visible;
+      armChain.visible = visible;
+      mountJoint.visible = visible;
+      elbowJoint.visible = visible;
+      eeJoint.visible = visible;
+      baseTrace.visible = visible;
+      eeTrace.visible = visible;
+    }}
+
+    function prepareColladaObject(object) {{
+      object.traverse(child => {{
+        if (child.isMesh) child.material = matRobot.clone();
+      }});
+    }}
+
     function updateRobotVisuals(frame) {{
-      if (!hasRobotVisuals() || !frame.linkTransforms) return;
+      if (robotVisuals.length === 0 || !frame.linkTransforms) return;
       for (const item of robotVisuals) {{
         const linkMatrix = frame.linkTransforms[item.spec.link];
         if (!linkMatrix) continue;
@@ -722,6 +773,18 @@ def _html_template(payload_json: str) -> str:
         .replaceAll(">", "&gt;")
         .replaceAll('"', "&quot;")
         .replaceAll("'", "&#039;");
+    }}
+
+    function base64ToArrayBuffer(base64) {{
+      const binary = atob(base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+      return bytes.buffer;
+    }}
+
+    function base64ToText(base64) {{
+      const bytes = new Uint8Array(base64ToArrayBuffer(base64));
+      return new TextDecoder("utf-8").decode(bytes);
     }}
 
     update(0);

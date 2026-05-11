@@ -5,7 +5,7 @@ import argparse
 from pathlib import Path
 
 from mm_flow.three_d.moma_kinematics import MomaPiperMobileManipulator3D
-from mm_flow.three_d.planners import available_planners, get_planner, plan_problem
+from mm_flow.three_d.planners import RecedingRRTConnectConfig, available_planners, get_planner, plan_problem
 from mm_flow.three_d.problems import build_moma_reach_sequence_problem
 from mm_flow.three_d.rrt_connect import RRTConnectConfig
 from mm_flow.three_d.run_io import save_reach_sequence_run
@@ -21,6 +21,15 @@ def main() -> None:
     parser.add_argument("--edge-resolution", type=float, default=0.06)
     parser.add_argument("--clearance-margin", type=float, default=0.01)
     parser.add_argument("--obstacle-count", type=int, default=24)
+    parser.add_argument(
+        "--problem-variant",
+        choices=["standard", "narrow_passage", "arm_obstacle", "base_required"],
+        default="standard",
+    )
+    parser.add_argument("--horizon-steps", type=int, default=24)
+    parser.add_argument("--execute-steps", type=int, default=6)
+    parser.add_argument("--max-cycles-per-goal", type=int, default=8)
+    parser.add_argument("--disturbance-std", type=float, default=0.0)
     parser.add_argument("--output-dir", type=Path, default=Path("outputs/moma_rrt_connect"))
     args = parser.parse_args()
 
@@ -31,8 +40,9 @@ def main() -> None:
         seed=args.seed,
         obstacle_count=args.obstacle_count,
         bounds_xy=bounds_xy,
+        variant=args.problem_variant,
     )
-    config = RRTConnectConfig(
+    rrt_config = RRTConnectConfig(
         max_iterations=args.max_iterations,
         step_size=args.step_size,
         edge_resolution=args.edge_resolution,
@@ -42,6 +52,17 @@ def main() -> None:
         clearance_margin=args.clearance_margin,
         bounds_xy=bounds_xy,
     )
+    if args.planner == "rrt_connect_receding":
+        config = RecedingRRTConnectConfig(
+            rrt=rrt_config,
+            horizon_steps=args.horizon_steps,
+            execute_steps=args.execute_steps,
+            max_cycles_per_goal=args.max_cycles_per_goal,
+            disturbance_std=args.disturbance_std,
+            follower_seed=args.seed,
+        )
+    else:
+        config = rrt_config
     result = plan_problem(
         args.planner,
         robot=robot,
