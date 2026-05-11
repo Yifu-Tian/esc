@@ -1,6 +1,6 @@
 # MM-Flow
 
-MM-Flow whole-body planning and generative replanning for mobile manipulators.
+Mobile Manipulator whole-body planning and generative replanning for mobile manipulators.
 
 ## Problem Statement
 
