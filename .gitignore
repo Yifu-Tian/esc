@@ -11,12 +11,18 @@ venv/
 # Data and model artifacts
 data/
 models/checkpoints/
-assets/robots/moma/
+assets/robots/
+third_party/
+papers/
 *.pt
 *.pth
 *.ckpt
 *.npz
 *.npy
+*.pdf
+*.gif
+*.mp4
+*.html
 
 # Logs and outputs
 outputs/

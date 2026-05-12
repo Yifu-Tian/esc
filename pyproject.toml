@@ -1,14 +1,11 @@
 [project]
-name = "mm-flow"
+name = "storm"
 version = "0.1.0"
-description = "MM-Flow generative replanning for mobile manipulators"
+description = "STORM structured trajectory generation for robot motion planning"
 requires-python = ">=3.9"
 dependencies = [
   "numpy",
-  "scipy",
-  "matplotlib",
 ]
 
 [tool.setuptools.packages.find]
 where = ["src"]
-

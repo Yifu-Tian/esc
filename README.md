@@ -1,38 +1,28 @@
-# MM-Flow
+# STORM
 
-Mobile Manipulator whole-body planning and generative replanning for mobile manipulators.
+Structured Trajectory generatiOn for Robot Motion planning.
 
-## Problem Statement
+STORM is a research workspace for generative, constraint-aware trajectory generation. The project treats a plan as a structured trajectory object rather than an isolated path: components may be coupled across robot bodies, time, history, environment geometry, and topology.
+
+## Problem
 
 Given:
 
-- current whole-body state
-- previous receding-horizon plan
-- recent executed state/action history
-- local obstacle observation
-- goal or task condition
+- task conditions such as start states, goals, and goal sequences
+- environment observations and obstacle geometry
+- robot structure or state representation
+- optional history or memory, such as executed paths or previous plans
 
 Generate:
 
-- the next receding-horizon whole-body trajectory
+- one or more structured trajectory candidates
 
 Subject to:
 
-- differential-drive base constraints
-- arm joint, velocity, and acceleration limits
-- whole-body collision avoidance
-- task progress or end-effector tracking
-- temporal consistency with previous execution
+- goal reaching
+- collision avoidance
+- smoothness and dynamic feasibility
+- spatial coupling constraints
+- history-dependent and topology-dependent constraints
 
-## Repository Layout
-
-- `src/`: core implementation.
-- `configs/`: experiment and model configuration files.
-- `experiments/`: runnable experiment entry points.
-- `models/`: trained model checkpoints and model definitions when needed.
-- `data/`: generated datasets and cached environments.
-- `scripts/`: utility scripts.
-- `notebooks/`: exploratory analysis.
-- `docs/`: project notes and design documents.
-- `papers/`: related-paper notes.
-- `tests/`: focused tests for geometry, dynamics, and planners.
+The initial target task is tethered-robot trajectory generation, where the executed history approximates the tether topology. The framework remains general enough to keep whole-body mobile manipulation as a structured-trajectory instance rather than the main project identity.
