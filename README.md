@@ -1,6 +1,4 @@
-# STORM
-
-Structured Trajectory generatiOn for Robot Motion planning.
+# STORM: Structured Trajectory Generation for Robot Motion Planning.
 
 STORM is a research workspace for generative, constraint-aware trajectory generation. The project treats a plan as a structured trajectory object rather than an isolated path: components may be coupled across robot bodies, time, history, environment geometry, and topology.
 
