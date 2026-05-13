@@ -17,7 +17,7 @@ Generate a future trajectory:
 tau = {x_t, ..., x_T}
 ```
 
-such that it is:
+such that:
 
 ```text
 goal-reaching
