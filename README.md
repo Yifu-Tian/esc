@@ -11,7 +11,7 @@ x_t: current robot state
 g: target goal
 ```
 
-Generate a future trajectory:
+Generate a trajectory:
 
 ```text
 tau = {x_t, ..., x_T}
