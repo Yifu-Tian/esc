@@ -26,4 +26,3 @@ tangle-free / topology-consistent with history
 smooth enough for execution
 ```
 
-The initial focus is a 2D tethered point robot with circular obstacles. This is a controlled testbed for validating the central idea before moving to 2.5D / 3D scenes.
