@@ -1,6 +1,6 @@
 # ESC: Every Step Counts
 
-## Problem
+## Problem Formulation
 
 Given:
 
