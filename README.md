@@ -1,6 +1,6 @@
 # ESC: Every Step Counts
 
-History-Conditioned Generative Motion Planning for Tethered Robots
+History-Conditioned Generative Motion Planning for Tethered Robots.
 
 ## Problem Formulation
 
