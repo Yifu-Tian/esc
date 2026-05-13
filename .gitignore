@@ -8,10 +8,12 @@ __pycache__/
 .venv/
 venv/
 
-# Data and model artifacts
-data/
-models/checkpoints/
-assets/robots/
+# Local data and generated artifacts
+data/*
+outputs/*
+models/
+runs/
+wandb/
 third_party/
 papers/
 *.pt
@@ -23,23 +25,18 @@ papers/
 *.gif
 *.mp4
 *.html
-
-# Logs and outputs
-outputs/
-runs/
-wandb/
 *.log
 
-# Local notes and generated documentation.
-# Keep only the root README.md tracked on GitHub.
-*.md
-!/README.md
+# Keep placeholder files for empty directories
+!data/.gitkeep
+!outputs/.gitkeep
+
+# Local notes and generated documentation
+track.md
 docs/
 
-# Editors
+# Editors / OS
 .vscode/
 .idea/
-
-# OS
 .DS_Store
 Thumbs.db

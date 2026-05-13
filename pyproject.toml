@@ -1,7 +1,7 @@
 [project]
-name = "storm"
+name = "esc"
 version = "0.1.0"
-description = "STORM structured trajectory generation for robot motion planning"
+description = "Every Step Counts: history-conditioned trajectory generation for tethered robot motion"
 requires-python = ">=3.9"
 dependencies = [
   "numpy",
@@ -9,3 +9,8 @@ dependencies = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+norecursedirs = ["outputs", "data", "models", "third_party"]
