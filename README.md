@@ -2,7 +2,7 @@
 
 ## Problem
 
-Given:
+Input:
 
 ```text
 H: executed history trajectory
